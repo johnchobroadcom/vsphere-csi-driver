@@ -54,25 +54,12 @@ func GetFakeContainerOrchestratorInterface(orchestratorType int) (commonco.COCom
 		fakeCO := &FakeK8SOrchestrator{
 			featureStatesLock: &sync.RWMutex{},
 			featureStates: map[string]string{
-				"volume-extend":                     "true",
-				"volume-health":                     "true",
-				"csi-migration":                     "true",
-				"file-volume":                       "true",
-				"block-volume-snapshot":             "true",
 				"tkgs-ha":                           "true",
-				"list-volumes":                      "true",
-				"csi-internal-generated-cluster-id": "true",
-				"online-volume-extend":              "true",
-				"async-query-volume":                "true",
 				"csi-windows-support":               "true",
 				"use-csinode-id":                    "true",
 				"pv-to-backingdiskobjectid-mapping": "false",
-				"cnsmgr-suspend-create-volume":      "true",
 				"topology-preferential-datastores":  "true",
-				"max-pvscsi-targets-per-vm":         "true",
-				"multi-vcenter-csi-topology":        "true",
 				"listview-tasks":                    "true",
-				"storage-quota-m2":                  "false",
 				"workload-domain-isolation":         "true",
 				// Adding FSS from `wcp-cluster-capabilities` configmap in supervisor here for simplicity.
 				// TODO: Enable FSS for unit tests after mockControllerVolumeTopology interfaces are implemented
@@ -82,7 +69,6 @@ func GetFakeContainerOrchestratorInterface(orchestratorType int) (commonco.COCom
 		return fakeCO, nil
 	}
 	return nil, fmt.Errorf("unrecognized CO type")
-
 }
 
 // IsFSSEnabled returns the FSS values for a given feature

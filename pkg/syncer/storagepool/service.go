@@ -30,7 +30,6 @@ import (
 	cnsvsphere "sigs.k8s.io/vsphere-csi-driver/v3/pkg/common/cns-lib/vsphere"
 	commonconfig "sigs.k8s.io/vsphere-csi-driver/v3/pkg/common/config"
 	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/common"
-	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/common/commonco"
 	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/logger"
 	k8s "sigs.k8s.io/vsphere-csi-driver/v3/pkg/kubernetes"
 )
@@ -56,27 +55,18 @@ func InitStoragePoolService(ctx context.Context,
 	log := logger.GetLogger(ctx)
 	clusterIDs := []string{configInfo.Cfg.Global.ClusterID}
 
-	if commonco.ContainerOrchestratorUtility.IsFSSEnabled(ctx, common.TKGsHA) {
-		clusterComputeResourceMoIds, err := common.GetClusterComputeResourceMoIds(ctx)
-		if err != nil {
-			log.Errorf("failed to get clusterComputeResourceMoIds. err: %v", err)
-			return err
-		}
-
-		clusterIDs = clusterComputeResourceMoIds
-		if len(clusterIDs) > 1 &&
-			(!commonco.ContainerOrchestratorUtility.IsFSSEnabled(ctx, common.PodVMOnStretchedSupervisor) ||
-				!commonco.ContainerOrchestratorUtility.IsFSSEnabled(ctx, common.VdppOnStretchedSupervisor)) {
-			log.Infof("`%s` and `%s` should be enabled for storage pool service on Stretched Supervisor. Exiting...",
-				common.PodVMOnStretchedSupervisor, common.VdppOnStretchedSupervisor)
-			return nil
-		}
+	clusterComputeResourceMoIds, err := common.GetClusterComputeResourceMoIds(ctx)
+	if err != nil {
+		log.Errorf("failed to get clusterComputeResourceMoIds. err: %v", err)
+		return err
 	}
+
+	clusterIDs = clusterComputeResourceMoIds
 
 	log.Infof("Initializing Storage Pool Service")
 
 	// Create StoragePool CRD.
-	err := k8s.CreateCustomResourceDefinitionFromManifest(ctx, storagepoolconfig.EmbedStoragePoolCRFile,
+	err = k8s.CreateCustomResourceDefinitionFromManifest(ctx, storagepoolconfig.EmbedStoragePoolCRFile,
 		storagepoolconfig.EmbedStoragePoolCRFileName)
 	if err != nil {
 		crdKind := reflect.TypeOf(spv1alpha1.StoragePool{}).Name()

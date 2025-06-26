@@ -203,9 +203,6 @@ func (c *K8sOrchestrator) InitTopologyServiceInController(ctx context.Context) (
 					return nil, err
 				}
 
-				// Set isMultivCenterCluster if the K8s cluster is a multi-VC cluster.
-				isMultiVCSupportEnabled = c.IsFSSEnabled(ctx, common.MultiVCenterCSITopology)
-
 				// Create a cache of topology tags -> VC -> associated MoRefs in that VC to ease volume provisioning.
 				err = common.DiscoverTagEntities(ctx)
 				if err != nil {
@@ -218,8 +215,6 @@ func (c *K8sOrchestrator) InitTopologyServiceInController(ctx context.Context) (
 					nodeMgr:                 nodeManager,
 					csiNodeTopologyInformer: *csiNodeTopologyInformer,
 					clusterFlavor:           clusterFlavor,
-					isTopologyPreferentialDatastoresFSSEnabled: c.IsFSSEnabled(ctx,
-						common.TopologyPreferentialDatastores),
 				}
 
 				if controllerVolumeTopologyInstance.isTopologyPreferentialDatastoresFSSEnabled {
@@ -255,8 +250,6 @@ func (c *K8sOrchestrator) InitTopologyServiceInController(ctx context.Context) (
 		}
 		return controllerVolumeTopologyInstance, nil
 	} else if c.clusterFlavor == cnstypes.CnsClusterFlavorWorkload {
-		// Set isPodVMOnStretchedSupervisorEnabled if podvm-on-stretched-supervisor fss is enabled
-		isPodVMOnStretchedSupervisorEnabled = c.IsFSSEnabled(ctx, common.PodVMOnStretchedSupervisor)
 		controllerVolumeTopologyInstanceLock.RLock()
 		if wcpControllerVolumeTopologyInstance == nil {
 			controllerVolumeTopologyInstanceLock.RUnlock()

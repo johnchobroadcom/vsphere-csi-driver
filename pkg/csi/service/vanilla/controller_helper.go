@@ -67,14 +67,14 @@ func validateVanillaControllerUnpublishVolumeRequest(ctx context.Context,
 // validate ExpandVolumeRequest for Vanilla CSI driver.
 // Function returns error if validation fails otherwise returns nil.
 func validateVanillaControllerExpandVolumeRequest(ctx context.Context,
-	req *csi.ControllerExpandVolumeRequest, isOnlineExpansionEnabled, isOnlineExpansionSupported bool) error {
+	req *csi.ControllerExpandVolumeRequest, isOnlineExpansionSupported bool) error {
 	log := logger.GetLogger(ctx)
 	if err := common.ValidateControllerExpandVolumeRequest(ctx, req); err != nil {
 		return err
 	}
 
 	// Check online extend FSS and vCenter support.
-	if isOnlineExpansionEnabled && isOnlineExpansionSupported {
+	if isOnlineExpansionSupported {
 		return nil
 	}
 
@@ -154,20 +154,10 @@ func getBlockVolumeIDToNodeUUIDMap(ctx context.Context, c *controller,
 	log.Debugf("getBlockVolumeIDToNodeUUIDMap called for Node VMs: %+v", allnodeVMs)
 	volumeIDNodeUUIDMap := make(map[string]string)
 	// Get VirtualCenter object(s)
-	// For multi-VC configuration, create map for volumes in all vCenters
-	if multivCenterCSITopologyEnabled {
-		vCenters, err = common.GetVCenters(ctx, c.managers)
-		if err != nil {
-			log.Errorf("GetVcenters error %v", err)
-			return nil, fmt.Errorf("failed to get vCenters from Managers, err: %v", err)
-		}
-	} else {
-		vc, err := common.GetVCenter(ctx, c.manager)
-		if err != nil {
-			log.Errorf("GetVcenter error %v", err)
-			return nil, fmt.Errorf("failed to get vCenter from Manager, err: %v", err)
-		}
-		vCenters = append(vCenters, vc)
+	vCenters, err = common.GetVCenters(ctx, c.managers)
+	if err != nil {
+		log.Errorf("GetVcenters error %v", err)
+		return nil, fmt.Errorf("failed to get vCenters from Managers, err: %v", err)
 	}
 
 	vmRefsPervCenter := make(map[string][]types.ManagedObjectReference)
@@ -235,36 +225,31 @@ func getVCenterAndVolumeManagerForVolumeID(ctx context.Context, controller *cont
 		vCenter            string
 		err                error
 	)
-	if multivCenterCSITopologyEnabled {
-		if len(controller.managers.VcenterConfigs) > 1 {
-			// Multi vCenter Deployment
-			vCenter, err = volumeInfoService.GetvCenterForVolumeID(ctx, volumeId)
-			if err != nil {
-				return "", nil, logger.LogNewErrorCodef(log, codes.Internal,
-					"failed to get vCenter for the volumeID: %q with err=%+v", volumeId, err)
-			}
-			if volumeManager, volumeManagerfound = controller.managers.VolumeManagers[vCenter]; !volumeManagerfound {
-				return vCenter, nil, logger.LogNewErrorCodef(log, codes.Internal,
-					"could not get volume manager for the vCenter: %q", vCenter)
-			}
-		} else {
-			// Single vCenter Deployment
-			vCenterConfig, vCenterFound := controller.managers.VcenterConfigs[controller.managers.CnsConfig.Global.VCenterIP]
-			if !vCenterFound {
-				return "", nil, logger.LogNewErrorCodef(log, codes.Internal,
-					"could not get vCenter config for the vCenter: %q",
-					controller.managers.CnsConfig.Global.VCenterIP)
-			}
-			vCenter = vCenterConfig.Host
-			if volumeManager, volumeManagerfound =
-				controller.managers.VolumeManagers[vCenter]; !volumeManagerfound {
-				return "", nil, logger.LogNewErrorCodef(log, codes.Internal,
-					"could not get volume manager for the vCenter: %q", vCenter)
-			}
+	if len(controller.managers.VcenterConfigs) > 1 {
+		// Multi vCenter Deployment
+		vCenter, err = volumeInfoService.GetvCenterForVolumeID(ctx, volumeId)
+		if err != nil {
+			return "", nil, logger.LogNewErrorCodef(log, codes.Internal,
+				"failed to get vCenter for the volumeID: %q with err=%+v", volumeId, err)
+		}
+		if volumeManager, volumeManagerfound = controller.managers.VolumeManagers[vCenter]; !volumeManagerfound {
+			return vCenter, nil, logger.LogNewErrorCodef(log, codes.Internal,
+				"could not get volume manager for the vCenter: %q", vCenter)
 		}
 	} else {
-		vCenter = controller.manager.VcenterConfig.Host
-		volumeManager = controller.manager.VolumeManager
+		// Single vCenter Deployment
+		vCenterConfig, vCenterFound := controller.managers.VcenterConfigs[controller.managers.CnsConfig.Global.VCenterIP]
+		if !vCenterFound {
+			return "", nil, logger.LogNewErrorCodef(log, codes.Internal,
+				"could not get vCenter config for the vCenter: %q",
+				controller.managers.CnsConfig.Global.VCenterIP)
+		}
+		vCenter = vCenterConfig.Host
+		if volumeManager, volumeManagerfound =
+			controller.managers.VolumeManagers[vCenter]; !volumeManagerfound {
+			return "", nil, logger.LogNewErrorCodef(log, codes.Internal,
+				"could not get volume manager for the vCenter: %q", vCenter)
+		}
 	}
 	return vCenter, volumeManager, nil
 }
@@ -276,11 +261,7 @@ func getVCenterAndVolumeManagerForVolumeID(ctx context.Context, controller *cont
 // `controller.managers.VCenterManager`.
 func getVCenterManagerForVCenter(ctx context.Context, controller *controller) vsphere.VirtualCenterManager {
 	var vCenterManager vsphere.VirtualCenterManager
-	if multivCenterCSITopologyEnabled {
-		vCenterManager = controller.managers.VcenterManager
-	} else {
-		vCenterManager = controller.manager.VcenterManager
-	}
+	vCenterManager = controller.managers.VcenterManager
 	return vCenterManager
 }
 

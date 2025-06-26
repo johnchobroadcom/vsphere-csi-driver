@@ -411,11 +411,7 @@ func (driver *vsphereCSIDriver) NodeGetInfo(
 
 	var maxVolumesPerNode int64
 	var maxAllowedVolumesPerNode int64
-	if commonco.ContainerOrchestratorUtility.IsFSSEnabled(ctx, common.MaxPVSCSITargetsPerVM) {
-		maxAllowedVolumesPerNode = maxAllowedBlockVolumesPerNodeInvSphere8
-	} else {
-		maxAllowedVolumesPerNode = maxAllowedBlockVolumesPerNode
-	}
+	maxAllowedVolumesPerNode = maxAllowedBlockVolumesPerNodeInvSphere8
 	if v := os.Getenv("MAX_VOLUMES_PER_NODE"); v != "" {
 		if value, err := strconv.ParseInt(v, 10, 64); err == nil {
 			if value < 0 {
@@ -449,7 +445,6 @@ func (driver *vsphereCSIDriver) NodeGetInfo(
 			log.Infof("NodeGetInfo response: %v", nodeInfoResponse)
 			return nodeInfoResponse, nil
 		}
-
 		// Initialize volume topology service if tkgs-ha is enabled in guest cluster.
 		if err = initVolumeTopologyService(ctx); err != nil {
 			return nil, err
@@ -552,23 +547,21 @@ func (driver *vsphereCSIDriver) NodeExpandVolume(
 	}
 	log.Debugf("NodeExpandVolume: staging target path %s, getDevFromMount %+v", volumePath, *dev)
 
-	if commonco.ContainerOrchestratorUtility.IsFSSEnabled(ctx, common.OnlineVolumeExtend) {
-		// Fetch the current block size.
-		currentBlockSizeBytes, err := driver.osUtils.GetBlockSizeBytes(ctx, dev.RealDev)
+	// Fetch the current block size.
+	currentBlockSizeBytes, err := driver.osUtils.GetBlockSizeBytes(ctx, dev.RealDev)
+	if err != nil {
+		return nil, logger.LogNewErrorCodef(log, codes.Internal,
+			"error when getting size of block volume at path %s: %v", dev.RealDev, err)
+	}
+	// Check if a rescan is required.
+	if currentBlockSizeBytes < reqVolSizeBytes {
+		// If a device is expanded while it is attached to a VM, we need to
+		// rescan the device on the guest OS in order to see the modified size
+		// on the Guest OS.
+		// Refer to https://kb.vmware.com/s/article/1006371
+		err = driver.osUtils.RescanDevice(ctx, dev)
 		if err != nil {
-			return nil, logger.LogNewErrorCodef(log, codes.Internal,
-				"error when getting size of block volume at path %s: %v", dev.RealDev, err)
-		}
-		// Check if a rescan is required.
-		if currentBlockSizeBytes < reqVolSizeBytes {
-			// If a device is expanded while it is attached to a VM, we need to
-			// rescan the device on the guest OS in order to see the modified size
-			// on the Guest OS.
-			// Refer to https://kb.vmware.com/s/article/1006371
-			err = driver.osUtils.RescanDevice(ctx, dev)
-			if err != nil {
-				return nil, logger.LogNewErrorCode(log, codes.Internal, err.Error())
-			}
+			return nil, logger.LogNewErrorCode(log, codes.Internal, err.Error())
 		}
 	}
 

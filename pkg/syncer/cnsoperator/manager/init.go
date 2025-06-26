@@ -78,21 +78,14 @@ func InitCnsOperator(ctx context.Context, clusterFlavor cnstypes.CnsClusterFlavo
 			err      error
 			vcconfig *cnsvsphere.VirtualCenterConfig
 		)
-		if commonco.ContainerOrchestratorUtility.IsFSSEnabled(ctx, common.MultiVCenterCSITopology) {
-			vcconfig, err = cnsvsphere.GetVirtualCenterConfig(ctx, cnsOperator.configInfo.Cfg)
-			if err != nil {
-				log.Errorf("failed to get VirtualCenterConfig. Err: %+v", err)
-				return err
-			}
-			vCenter, err = cnsvsphere.GetVirtualCenterInstanceForVCenterConfig(ctx, vcconfig, false)
-			if err != nil {
-				return err
-			}
-		} else {
-			vCenter, err = cnsvsphere.GetVirtualCenterInstance(ctx, cnsOperator.configInfo, false)
-			if err != nil {
-				return err
-			}
+		vcconfig, err = cnsvsphere.GetVirtualCenterConfig(ctx, cnsOperator.configInfo.Cfg)
+		if err != nil {
+			log.Errorf("failed to get VirtualCenterConfig. Err: %+v", err)
+			return err
+		}
+		vCenter, err = cnsvsphere.GetVirtualCenterInstanceForVCenterConfig(ctx, vcconfig, false)
+		if err != nil {
+			return err
 		}
 
 		volumeManager, err = volumes.GetManager(ctx, vCenter, nil, false, false, false, clusterFlavor)
@@ -119,8 +112,6 @@ func InitCnsOperator(ctx context.Context, clusterFlavor cnstypes.CnsClusterFlavo
 	// TODO: Verify leader election for CNS Operator in multi-master mode
 	// Create CRD's for WCP flavor.
 	if clusterFlavor == cnstypes.CnsClusterFlavorWorkload {
-		syncer.IsPodVMOnStretchSupervisorFSSEnabled = cnsOperator.coCommonInterface.IsFSSEnabled(ctx,
-			common.PodVMOnStretchedSupervisor)
 		// Create CnsNodeVmAttachment CRD
 		err = k8s.CreateCustomResourceDefinitionFromManifest(ctx, cnsoperatorconfig.EmbedCnsNodeVmAttachmentCRFile,
 			cnsoperatorconfig.EmbedCnsNodeVmAttachmentCRFileName)
@@ -151,10 +142,10 @@ func InitCnsOperator(ctx context.Context, clusterFlavor cnstypes.CnsClusterFlavo
 				stretchedSupervisor = true
 			}
 		}
+
 		if stretchedSupervisor {
 			log.Info("Observed stretchedSupervisor setup")
-		}
-		if !stretchedSupervisor || (stretchedSupervisor && syncer.IsPodVMOnStretchSupervisorFSSEnabled) {
+
 			// Create CnsRegisterVolume CRD from manifest.
 			log.Infof("Creating %q CRD", cnsoperatorv1alpha1.CnsRegisterVolumePlural)
 			err = k8s.CreateCustomResourceDefinitionFromManifest(ctx, cnsoperatorconfig.EmbedCnsRegisterVolumeCRFile,
@@ -221,24 +212,21 @@ func InitCnsOperator(ctx context.Context, clusterFlavor cnstypes.CnsClusterFlavo
 		}
 
 		if !stretchedSupervisor || (stretchedSupervisor && syncer.IsWorkloadDomainIsolationSupported) {
-			if cnsOperator.coCommonInterface.IsFSSEnabled(ctx, common.FileVolume) {
-				// Create CnsFileAccessConfig CRD from manifest if file volume feature
-				// is enabled.
-				err = k8s.CreateCustomResourceDefinitionFromManifest(ctx, cnsoperatorconfig.EmbedCnsFileAccessConfigCRFile,
-					cnsoperatorconfig.EmbedCnsFileAccessConfigCRFileName)
-				if err != nil {
-					log.Errorf("Failed to create %q CRD. Err: %+v", cnsoperatorv1alpha1.CnsFileAccessConfigPlural, err)
-					return err
-				}
-				// Create FileVolumeClients CRD from manifest if file volume feature
-				// is enabled.
-				err = k8s.CreateCustomResourceDefinitionFromManifest(ctx,
-					internalapiscnsoperatorconfig.EmbedCnsFileVolumeClientFile,
-					internalapiscnsoperatorconfig.EmbedCnsFileVolumeClientFileName)
-				if err != nil {
-					log.Errorf("Failed to create %q CRD. Err: %+v", internalapis.CnsFileVolumeClientPlural, err)
-					return err
-				}
+			// Create CnsFileAccessConfig CRD from manifest
+			err = k8s.CreateCustomResourceDefinitionFromManifest(ctx, cnsoperatorconfig.EmbedCnsFileAccessConfigCRFile,
+				cnsoperatorconfig.EmbedCnsFileAccessConfigCRFileName)
+			if err != nil {
+				log.Errorf("Failed to create %q CRD. Err: %+v", cnsoperatorv1alpha1.CnsFileAccessConfigPlural, err)
+				return err
+			}
+			// Create FileVolumeClients CRD from manifest if file volume feature
+			// is enabled.
+			err = k8s.CreateCustomResourceDefinitionFromManifest(ctx,
+				internalapiscnsoperatorconfig.EmbedCnsFileVolumeClientFile,
+				internalapiscnsoperatorconfig.EmbedCnsFileVolumeClientFileName)
+			if err != nil {
+				log.Errorf("Failed to create %q CRD. Err: %+v", internalapis.CnsFileVolumeClientPlural, err)
+				return err
 			}
 		}
 	} else if clusterFlavor == cnstypes.CnsClusterFlavorVanilla {

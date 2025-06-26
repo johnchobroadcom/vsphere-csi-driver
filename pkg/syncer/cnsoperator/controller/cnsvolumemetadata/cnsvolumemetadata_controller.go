@@ -21,13 +21,13 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/common"
+	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/common/commonco"
 	"strconv"
 	"sync"
 	"time"
 
 	commonconfig "sigs.k8s.io/vsphere-csi-driver/v3/pkg/common/config"
-	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/common"
-	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/common/commonco"
 	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/logger"
 
 	"github.com/davecgh/go-spew/spew"
@@ -224,7 +224,7 @@ func (r *ReconcileCnsVolumeMetadata) Reconcile(ctx context.Context,
 	// If the operation succeeds, remove the finalizer.
 	// If the operation fails, requeue the request.
 	if instance.DeletionTimestamp != nil {
-		if !r.updateCnsMetadata(ctx, instance, true, isTKGSHAEnabled) {
+		if !r.updateCnsMetadata(ctx, instance, isTKGSHAEnabled) {
 			// Failed to update CNS.
 			msg := fmt.Sprintf("ReconcileCnsVolumeMetadata: Failed to delete entry in CNS for instance "+
 				"with name %q and entity type %q in the guest cluster %q. Requeuing request.",
@@ -283,7 +283,7 @@ func (r *ReconcileCnsVolumeMetadata) Reconcile(ctx context.Context,
 		}
 	} else {
 		// Update CNS volume entry with instance's metadata.
-		if !r.updateCnsMetadata(ctx, instance, false, isTKGSHAEnabled) {
+		if !r.updateCnsMetadata(ctx, instance, isTKGSHAEnabled) {
 			// Failed to update CNS.
 			msg := fmt.Sprintf("ReconcileCnsVolumeMetadata: Failed to update entry in CNS for instance "+
 				"with name %q and entity type %q in the guest cluster %q. Requeueing request.",
@@ -314,7 +314,7 @@ func (r *ReconcileCnsVolumeMetadata) Reconcile(ctx context.Context,
 // If deleteFlag is true, metadata is deleted for the given instance.
 // Returns true if all updates on CNS succeeded, otherwise return false.
 func (r *ReconcileCnsVolumeMetadata) updateCnsMetadata(ctx context.Context,
-	instance *cnsv1alpha1.CnsVolumeMetadata, deleteFlag bool, useSupervisorID bool) bool {
+	instance *cnsv1alpha1.CnsVolumeMetadata, deleteFlag bool) bool {
 	log := logger.GetLogger(ctx)
 	log.Debugf("ReconcileCnsVolumeMetadata: Calling updateCnsMetadata for instance %q with delete flag %v",
 		instance.Name, deleteFlag)
@@ -333,11 +333,7 @@ func (r *ReconcileCnsVolumeMetadata) updateCnsMetadata(ctx context.Context,
 	for _, reference := range instance.Spec.EntityReferences {
 		clusterID := reference.ClusterID
 		if instance.Spec.EntityType == cnsv1alpha1.CnsOperatorEntityTypePV {
-			if useSupervisorID {
-				clusterID = r.configInfo.Cfg.Global.SupervisorID
-			} else {
-				clusterID = r.configInfo.Cfg.Global.ClusterID
-			}
+			clusterID = r.configInfo.Cfg.Global.SupervisorID
 		}
 		entityReferences = append(entityReferences, cnsvsphere.CreateCnsKuberenetesEntityReference(
 			reference.EntityType, reference.EntityName, reference.Namespace, clusterID))

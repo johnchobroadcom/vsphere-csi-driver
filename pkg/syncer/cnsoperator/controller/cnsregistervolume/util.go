@@ -149,8 +149,7 @@ func constructCreateSpecForInstance(r *ReconcileCnsRegisterVolume,
 // getK8sStorageClassNameWithImmediateBindingModeForPolicy gets the storage class name in K8S mapping the vsphere
 // storagepolicy id. The policy must also be assigned to the passed namespace.
 func getK8sStorageClassNameWithImmediateBindingModeForPolicy(ctx context.Context, k8sClient clientset.Interface,
-	client ctrlruntimeclient.Client, storagePolicyID string, namespace string,
-	isPodVMOnStretchedSupervisorEnabled bool) (string, error) {
+	client ctrlruntimeclient.Client, storagePolicyID string, namespace string) (string, error) {
 	log := logger.GetLogger(ctx)
 	scList, err := k8sClient.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -170,73 +169,42 @@ func getK8sStorageClassNameWithImmediateBindingModeForPolicy(ctx context.Context
 		}
 	}
 
-	if !isPodVMOnStretchedSupervisorEnabled {
-		/*
-			Resource Quotas
-				Name:                                                                   <namespace>-storagequota
-				Resource                                                                Used  Hard
-				--------                                                                ---   ---
-				<storage-class-name>.storageclass.storage.k8s.io/requests.storage  		0     5Gi
-		*/
-		quotaList, err := k8sClient.CoreV1().ResourceQuotas(namespace).List(ctx, metav1.ListOptions{})
-		if err != nil {
-			return "", logger.LogNewErrorf(log, "Failed to get resource quotas on the namespace: %s", namespace)
-		}
-
-		if scName != "" && len(quotaList.Items) > 0 {
-			for _, quota := range quotaList.Items {
-				// Looping over each named resource in the storage quota to check if
-				// it matches the storage class.
-				for resource := range quota.Spec.Hard {
-					if scName+scResourceNameSuffix == resource.String() {
-						log.Debugf("Found k8s storage class: %s with storagePolicyId: %s and "+
-							"the policy is assigned to namespace: %s", scName, storagePolicyID, namespace)
-						return scName, nil
-					}
-				}
-			}
-		}
-		return "", logger.LogNewErrorf(log, "Failed to find matching K8s Storageclass. "+
-			"Either storagepolicyId: %s doesn't match any storage class, or the policy is not assigned to namespace: %s",
-			storagePolicyID, namespace)
-	} else {
-		storagePolicyQuotaList := &cnsstoragepolicyquotasv1alpha2.StoragePolicyQuotaList{}
-		err := client.List(ctx, storagePolicyQuotaList, &ctrlruntimeclient.ListOptions{
-			Namespace: namespace,
-		})
-		if err != nil {
-			return "", logger.LogNewErrorf(log, "Failed to list StoragePolicyQuota CR on the namespace: %s", namespace)
-		}
-		log.Debugf("Found scName %s which has matching storagePolicyId %s", scName, storagePolicyID)
-		log.Debugf("Fetch storagePolicyQuotaList: %+v  in namespace %s", storagePolicyQuotaList, namespace)
-		foundMatchStoragePolicyQuotaCR := false
-		matchedStoragePolicyQuotaCR := cnsstoragepolicyquotasv1alpha2.StoragePolicyQuota{}
-		if scName != "" && len(storagePolicyQuotaList.Items) > 0 {
-			for _, storagePolicyQuota := range storagePolicyQuotaList.Items {
-				if storagePolicyQuota.Spec.StoragePolicyId == storagePolicyID {
-					log.Debugf("Found storagePlicyQuota CR with matching storagePolicyId:%s in namespaces:%s",
-						storagePolicyID, namespace)
-					foundMatchStoragePolicyQuotaCR = true
-					matchedStoragePolicyQuotaCR = storagePolicyQuota
-					break
-				}
-			}
-			// NOTE: Below code expects StoragePolicyQuota CR status will be populated with all fields with zero values from the
-			// start (to be taken care by quota controller), otherwise this code will always return error.
-			if foundMatchStoragePolicyQuotaCR && len(matchedStoragePolicyQuotaCR.Status.SCLevelQuotaStatuses) > 0 {
-				for _, quota := range matchedStoragePolicyQuotaCR.Status.SCLevelQuotaStatuses {
-					if quota.StorageClassName == scName {
-						log.Debugf("Found k8s storage class: %s with storagePolicyId: %s and "+
-							"the policy is assigned to namespace: %s", scName, storagePolicyID, namespace)
-						return scName, nil
-					}
-				}
-			}
-		}
-		return "", logger.LogNewErrorf(log, "Failed to find matching K8s Storageclass. "+
-			"Either storagepolicyId: %s doesn't match any storage class, or the policy is not assigned to namespace: %s",
-			storagePolicyID, namespace)
+	storagePolicyQuotaList := &cnsstoragepolicyquotasv1alpha2.StoragePolicyQuotaList{}
+	err = client.List(ctx, storagePolicyQuotaList, &ctrlruntimeclient.ListOptions{
+		Namespace: namespace,
+	})
+	if err != nil {
+		return "", logger.LogNewErrorf(log, "Failed to list StoragePolicyQuota CR on the namespace: %s", namespace)
 	}
+	log.Debugf("Found scName %s which has matching storagePolicyId %s", scName, storagePolicyID)
+	log.Debugf("Fetch storagePolicyQuotaList: %+v  in namespace %s", storagePolicyQuotaList, namespace)
+	foundMatchStoragePolicyQuotaCR := false
+	matchedStoragePolicyQuotaCR := cnsstoragepolicyquotasv1alpha2.StoragePolicyQuota{}
+	if scName != "" && len(storagePolicyQuotaList.Items) > 0 {
+		for _, storagePolicyQuota := range storagePolicyQuotaList.Items {
+			if storagePolicyQuota.Spec.StoragePolicyId == storagePolicyID {
+				log.Debugf("Found storagePlicyQuota CR with matching storagePolicyId:%s in namespaces:%s",
+					storagePolicyID, namespace)
+				foundMatchStoragePolicyQuotaCR = true
+				matchedStoragePolicyQuotaCR = storagePolicyQuota
+				break
+			}
+		}
+		// NOTE: Below code expects StoragePolicyQuota CR status will be populated with all fields with zero values from the
+		// start (to be taken care by quota controller), otherwise this code will always return error.
+		if foundMatchStoragePolicyQuotaCR && len(matchedStoragePolicyQuotaCR.Status.SCLevelQuotaStatuses) > 0 {
+			for _, quota := range matchedStoragePolicyQuotaCR.Status.SCLevelQuotaStatuses {
+				if quota.StorageClassName == scName {
+					log.Debugf("Found k8s storage class: %s with storagePolicyId: %s and "+
+						"the policy is assigned to namespace: %s", scName, storagePolicyID, namespace)
+					return scName, nil
+				}
+			}
+		}
+	}
+	return "", logger.LogNewErrorf(log, "Failed to find matching K8s Storageclass. "+
+		"Either storagepolicyId: %s doesn't match any storage class, or the policy is not assigned to namespace: %s",
+		storagePolicyID, namespace)
 }
 
 // getPersistentVolumeSpec to create PV volume spec for the given input params.

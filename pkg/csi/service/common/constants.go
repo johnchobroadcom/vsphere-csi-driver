@@ -359,66 +359,16 @@ const (
 const (
 	// Default interval to check if the feature is enabled or not.
 	DefaultFeatureEnablementCheckInterval = 1 * time.Minute
-	// VolumeHealth is the feature flag name for volume health.
-	VolumeHealth = "volume-health"
-	// VolumeExtend is feature flag name for volume expansion.
-	VolumeExtend = "volume-extend"
-	// OnlineVolumeExtend guards the feature for online volume expansion.
-	OnlineVolumeExtend = "online-volume-extend"
-	// CSIMigration is feature flag for migrating in-tree vSphere volumes to CSI.
-	CSIMigration = "csi-migration"
-	// AsyncQueryVolume is feature flag for using async query volume API.
-	AsyncQueryVolume = "async-query-volume"
-	// CSISVFeatureStateReplication is feature flag for SV feature state
-	// replication feature.
-	CSISVFeatureStateReplication = "csi-sv-feature-states-replication"
-	// FileVolume is feature flag name for file volume support in WCP.
-	FileVolume = "file-volume"
-	// FakeAttach is the feature flag for fake attach support in WCP.
-	FakeAttach = "fake-attach"
 	// TriggerCSIFullSyync is feature flag to trigger full sync.
 	TriggerCsiFullSync = "trigger-csi-fullsync"
-	// CSIVolumeManagerIdempotency is the feature flag for idempotency handling
-	// in CSI volume manager.
-	CSIVolumeManagerIdempotency = "improved-csi-idempotency"
-	// BlockVolumeSnapshot is the feature to support CSI Snapshots for block
-	// volume on vSphere CSI driver.
-	BlockVolumeSnapshot = "block-volume-snapshot"
-	// SiblingReplicaBoundPvcCheck is the feature to check whether a PVC of
-	// a given replica can be placed on a node such that it does not have PVCs
-	// of any of its sibling replicas.
-	SiblingReplicaBoundPvcCheck = "sibling-replica-bound-pvc-check"
 	// CSIWindowsSupport is the feature to support csi block volumes for windows
 	// node.
 	CSIWindowsSupport = "csi-windows-support"
-	// TKGsHA is the feature gate to check whether TKGS HA feature
+	// TKGsHA is the feature gate to check whether TKGS HA featureAdd commentMore actions
 	// is enabled.
 	TKGsHA = "tkgs-ha"
-	// ListVolumes is the feature to support list volumes API
-	ListVolumes = "list-volumes"
 	// PVtoBackingDiskObjectIdMapping is the feature to support pv to backingDiskObjectId mapping on vSphere CSI driver.
 	PVtoBackingDiskObjectIdMapping = "pv-to-backingdiskobjectid-mapping"
-	// Block Create Volume for datastores that are in suspended mode
-	CnsMgrSuspendCreateVolume = "cnsmgr-suspend-create-volume"
-	// TopologyPreferentialDatastores is the feature gate for preferential
-	// datastore deployment in topology aware environments.
-	TopologyPreferentialDatastores = "topology-preferential-datastores"
-	// MaxPVSCSITargetsPerVM enables support for 255 volumes per node vm
-	MaxPVSCSITargetsPerVM = "max-pvscsi-targets-per-vm"
-	// MultiVCenterCSITopology is the feature gate for enabling multi vCenter topology support for vSphere CSI driver.
-	MultiVCenterCSITopology = "multi-vcenter-csi-topology"
-	// CSIInternalGeneratedClusterID enables support to generate unique cluster
-	// ID internally if user doesn't provide it in vSphere config secret.
-	CSIInternalGeneratedClusterID = "csi-internal-generated-cluster-id"
-	// TopologyAwareFileVolume enables provisioning of file volumes in a topology enabled environment
-	TopologyAwareFileVolume = "topology-aware-file-volume"
-	// PodVMOnStretchedSupervisor is the WCP FSS which determines if PodVM
-	// support is available on stretched supervisor cluster.
-	PodVMOnStretchedSupervisor = "PodVM_On_Stretched_Supervisor_Supported"
-	// StorageQuotaM2 enables support for snapshot quota feature
-	StorageQuotaM2 = "storage-quota-m2"
-	// VdppOnStretchedSupervisor enables support for vDPp workloads on stretched SV clusters
-	VdppOnStretchedSupervisor = "vdpp-on-stretched-supervisor"
 	// CSIDetachOnSupervisor enables CSI to detach the disk from the podvm in a supervisor environment
 	CSIDetachOnSupervisor = "CSI_Detach_Supported"
 	// CnsUnregisterVolume enables the creation of CRD and controller for CnsUnregisterVolume API.
@@ -445,10 +395,9 @@ const (
 )
 
 var WCPFeatureStates = map[string]struct{}{
-	PodVMOnStretchedSupervisor: {},
-	CSIDetachOnSupervisor:      {},
-	WorkloadDomainIsolation:    {},
-	VPCCapabilitySupervisor:    {},
+	CSIDetachOnSupervisor:   {},
+	WorkloadDomainIsolation: {},
+	VPCCapabilitySupervisor: {},
 }
 
 // WCPFeatureStatesSupportsLateEnablement contains capabilities that can be enabled later

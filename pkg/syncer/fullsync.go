@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/common/commonco"
 	"strings"
 	"sync"
 	"time"
@@ -51,7 +52,6 @@ import (
 	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/common/prometheus"
 	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/common/utils"
 	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/common"
-	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/common/commonco"
 	commoncotypes "sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/common/commonco/types"
 	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/logger"
 	cnsvolumeinfov1alpha1 "sigs.k8s.io/vsphere-csi-driver/v3/pkg/internalapis/cnsvolumeinfo/v1alpha1"
@@ -74,30 +74,25 @@ func CsiFullSync(ctx context.Context, metadataSyncer *metadataSyncInformer, vc s
 	var err error
 	// Fetch CSI migration feature state, before performing full sync operations.
 	if metadataSyncer.clusterFlavor == cnstypes.CnsClusterFlavorVanilla {
-		if metadataSyncer.coCommonInterface.IsFSSEnabled(ctx, common.CSIMigration) &&
-			len(metadataSyncer.configInfo.Cfg.VirtualCenter) == 1 {
+		if len(metadataSyncer.configInfo.Cfg.VirtualCenter) == 1 {
 			migrationFeatureStateForFullSync = true
 		}
 	}
 	// Attempt to create StoragePolicyUsage CRs.
 	if metadataSyncer.clusterFlavor == cnstypes.CnsClusterFlavorWorkload {
-		if IsPodVMOnStretchSupervisorFSSEnabled {
-			createStoragePolicyUsageCRS(ctx, metadataSyncer)
-		}
+		createStoragePolicyUsageCRS(ctx, metadataSyncer)
 	}
 	// Sync VolumeInfo CRs for the below conditions:
 	// Either it is a Vanilla k8s deployment with Multi-VC configuration or, it's a StretchSupervisor cluster
-	if isMultiVCenterFssEnabled && len(metadataSyncer.configInfo.Cfg.VirtualCenter) > 1 ||
-		(metadataSyncer.clusterFlavor == cnstypes.CnsClusterFlavorWorkload && IsPodVMOnStretchSupervisorFSSEnabled) {
+	if len(metadataSyncer.configInfo.Cfg.VirtualCenter) > 1 ||
+		metadataSyncer.clusterFlavor == cnstypes.CnsClusterFlavorWorkload {
 		volumeInfoCRFullSync(ctx, metadataSyncer, vc)
 		cleanUpVolumeInfoCrDeletionMap(ctx, metadataSyncer, vc)
 	}
 	// Attempt to patch StoragePolicyUsage CRs. For storagePolicyUsageCRSync to work,
 	// we need CNSVolumeInfo CRs to be present for all existing volumes.
 	if metadataSyncer.clusterFlavor == cnstypes.CnsClusterFlavorWorkload {
-		if IsPodVMOnStretchSupervisorFSSEnabled {
-			storagePolicyUsageCRSync(ctx, metadataSyncer)
-		}
+		storagePolicyUsageCRSync(ctx, metadataSyncer)
 	}
 
 	// On Supervisor cluster, if SVPVCSnapshotProtectionFinalizer FSS is enabled,
@@ -180,18 +175,10 @@ func CsiFullSync(ctx context.Context, metadataSyncer *metadataSyncInformer, vc s
 
 	var vcenter *cnsvsphere.VirtualCenter
 	// Get VC instance.
-	if isMultiVCenterFssEnabled {
-		vcenter, err = cnsvsphere.GetVirtualCenterInstanceForVCenterHost(ctx, vc, true)
-		if err != nil {
-			log.Errorf("failed to get virtual center instance for VC: %s. Error: %v", vc, err)
-			return err
-		}
-	} else {
-		vcenter, err = cnsvsphere.GetVirtualCenterInstance(ctx, metadataSyncer.configInfo, false)
-		if err != nil {
-			log.Errorf("failed to get virtual center instance with error: %v", err)
-			return err
-		}
+	vcenter, err = cnsvsphere.GetVirtualCenterInstanceForVCenterHost(ctx, vc, true)
+	if err != nil {
+		log.Errorf("failed to get virtual center instance for VC: %s. Error: %v", vc, err)
+		return err
 	}
 
 	// Iterate through all the k8sPVs to find all PVs with node affinity missing and
@@ -437,8 +424,7 @@ func getPVNodeAffinity(ctx context.Context, metadataSyncer *metadataSyncInformer
 		querySelection := cnstypes.CnsQuerySelection{
 			Names: []string{string(cnstypes.QuerySelectionNameTypeDataStoreUrl)},
 		}
-		queryResult, err := utils.QueryVolumeUtil(ctx, volManager, queryFilter, &querySelection,
-			true)
+		queryResult, err := utils.QueryVolumeUtil(ctx, volManager, queryFilter, &querySelection)
 		if err != nil || queryResult == nil || len(queryResult.Volumes) != 1 {
 			return nil, logger.LogNewErrorCodef(log, codes.Internal,
 				"failed to find the datastore on which volume %q is provisioned. "+
@@ -686,7 +672,7 @@ func volumeInfoCRFullSync(ctx context.Context, metadataSyncer *metadataSyncInfor
 
 	volumeIdTok8sPVMap := make(map[string]*v1.PersistentVolume)
 	scNameToPolicyIdMap := make(map[string]string)
-	if metadataSyncer.clusterFlavor == cnstypes.CnsClusterFlavorWorkload && IsPodVMOnStretchSupervisorFSSEnabled {
+	if metadataSyncer.clusterFlavor == cnstypes.CnsClusterFlavorWorkload {
 		// Create volumeIdTok8sPVMap map for easy lookup of PVs
 		for _, pv := range currentK8sPV {
 			if pv.Spec.CSI != nil {
@@ -728,15 +714,14 @@ func volumeInfoCRFullSync(ctx context.Context, metadataSyncer *metadataSyncInfor
 		}
 		// Create VolumeInfo CR if not found.
 		if !crExists {
-			if isMultiVCenterFssEnabled && len(metadataSyncer.configInfo.Cfg.VirtualCenter) > 1 {
+			if len(metadataSyncer.configInfo.Cfg.VirtualCenter) > 1 {
 				err := volumeInfoService.CreateVolumeInfo(ctx, volumeID, vc)
 				if err != nil {
 					log.Errorf("FullSync for VC %s: failed to create VolumeInfo CR for volume %s."+
 						"Error: %+v", vc, volumeID, err)
 					continue
 				}
-			} else if metadataSyncer.clusterFlavor == cnstypes.CnsClusterFlavorWorkload &&
-				IsPodVMOnStretchSupervisorFSSEnabled {
+			} else if metadataSyncer.clusterFlavor == cnstypes.CnsClusterFlavorWorkload {
 				pv := volumeIdTok8sPVMap[volumeID]
 				// claimref will be nil when volume is static provisioned or any available/released pv
 				// which are not claimed by pvc. added a check to handle such cases.
@@ -956,7 +941,7 @@ func fullSyncCreateVolumes(ctx context.Context, createSpecArray []cnstypes.CnsVo
 					staticVolumeProvisioningSuccessReason, staticVolumeProvisioningSuccessMessage)
 			}
 
-			if isMultiVCenterFssEnabled && len(metadataSyncer.configInfo.Cfg.VirtualCenter) > 1 {
+			if len(metadataSyncer.configInfo.Cfg.VirtualCenter) > 1 {
 				// Create CNSVolumeInfo CR for the volume ID.
 				err = volumeInfoService.CreateVolumeInfo(ctx, volumeID, vc)
 				if err != nil {
@@ -1053,7 +1038,7 @@ func fullSyncDeleteVolumes(ctx context.Context, volumeIDDeleteArray []cnstypes.C
 					continue
 				}
 
-				if isMultiVCenterFssEnabled && len(metadataSyncer.configInfo.Cfg.VirtualCenter) > 1 {
+				if len(metadataSyncer.configInfo.Cfg.VirtualCenter) > 1 {
 					// Delete CNSVolumeInfo CR for the volume ID.
 					err = volumeInfoService.DeleteVolumeInfo(ctx, volume.VolumeId.Id)
 					if err != nil {

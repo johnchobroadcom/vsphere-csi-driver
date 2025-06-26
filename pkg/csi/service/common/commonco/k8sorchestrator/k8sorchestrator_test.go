@@ -162,7 +162,6 @@ func TestIsFSSEnabledInSV(t *testing.T) {
 	svFSS := map[string]string{
 		"volume-extend": "true",
 		"volume-health": "false",
-		"csi-migration": "enabled",
 	}
 	svFSSConfigMapInfo := FSSConfigMapInfo{
 		configMapName:      cnsconfig.DefaultSupervisorFSSConfigMapName,
@@ -181,11 +180,6 @@ func TestIsFSSEnabledInSV(t *testing.T) {
 	isEnabled = k8sOrchestrator.IsFSSEnabled(ctx, "volume-health")
 	if isEnabled {
 		t.Errorf("volume-health feature state is enabled!")
-	}
-	// Wrong value given
-	isEnabled = k8sOrchestrator.IsFSSEnabled(ctx, "csi-migration")
-	if isEnabled {
-		t.Errorf("csi-migration feature state is enabled even when it was assigned a wrong value!")
 	}
 	// Feature state missing
 	isEnabled = k8sOrchestrator.IsFSSEnabled(ctx, "online-volume-extend")

@@ -569,7 +569,7 @@ func isSiblingReplicaBoundPvcFSSEnabled(ctx context.Context) bool {
 		}
 	}
 
-	return containerOrchestratorUtility.IsFSSEnabled(ctx, common.SiblingReplicaBoundPvcCheck)
+	return true
 }
 
 // eliminateNodesWithPvcOfSiblingReplica filters out the nodes that have

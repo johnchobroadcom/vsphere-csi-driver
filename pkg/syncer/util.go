@@ -67,8 +67,7 @@ func getPVsInBoundAvailableOrReleased(ctx context.Context,
 	}
 	for _, pv := range allPVs {
 		if (pv.Spec.CSI != nil && pv.Spec.CSI.Driver == csitypes.Name) ||
-			(metadataSyncer.coCommonInterface.IsFSSEnabled(ctx, common.CSIMigration) && pv.Spec.VsphereVolume != nil &&
-				isValidvSphereVolume(ctx, pv)) {
+			(pv.Spec.VsphereVolume != nil && isValidvSphereVolume(ctx, pv)) {
 			log.Debugf("FullSync: pv %v is in state %v", pv.Name, pv.Status.Phase)
 			if pv.Status.Phase == v1.VolumeBound || pv.Status.Phase == v1.VolumeAvailable ||
 				pv.Status.Phase == v1.VolumeReleased {
@@ -155,15 +154,7 @@ func IsValidVolume(ctx context.Context, volume v1.Volume, pod *v1.Pod,
 	if pv.Spec.CSI == nil {
 		// Verify volume is a in-tree VCP volume.
 		if pv.Spec.VsphereVolume != nil {
-			// Check if migration feature switch is enabled.
-			if metadataSyncer.coCommonInterface.IsFSSEnabled(ctx, common.CSIMigration) {
-				if !isValidvSphereVolume(ctx, pv) {
-					return false, nil, nil
-				}
-			} else {
-				log.Debugf(
-					"%s feature switch is disabled. Cannot update vSphere volume metadata %s for the pod %s in namespace %s",
-					common.CSIMigration, pv.Name, pod.Name, pod.Namespace)
+			if !isValidvSphereVolume(ctx, pv) {
 				return false, nil, nil
 			}
 		} else {
@@ -189,7 +180,6 @@ func fullSyncGetQueryResults(ctx context.Context, volumeIds []cnstypes.CnsVolume
 	log := logger.GetLogger(ctx)
 	log.Debugf("FullSync: fullSyncGetQueryResults is called with volumeIds %v for clusterID %s",
 		volumeIds, clusterID)
-	useQueryVolumeAsync := metadataSyncer.coCommonInterface.IsFSSEnabled(ctx, common.AsyncQueryVolume)
 	var volumeIdsBatchesToFilter [][]cnstypes.CnsVolumeId
 	for i := 0; i < len(volumeIds); i += volumdIDLimitPerQuery {
 		end := i + volumdIDLimitPerQuery
@@ -207,8 +197,7 @@ func fullSyncGetQueryResults(ctx context.Context, volumeIds []cnstypes.CnsVolume
 		if clusterID != "" {
 			queryFilter.ContainerClusterIds = []string{clusterID}
 		}
-		queryResult, err := utils.QueryVolumeUtil(ctx, volumeManager, queryFilter, nil,
-			useQueryVolumeAsync)
+		queryResult, err := utils.QueryVolumeUtil(ctx, volumeManager, queryFilter, nil)
 		if err != nil {
 			return nil, logger.LogNewErrorCodef(log, codes.Internal,
 				"queryVolumeUtil failed with err=%+v", err.Error())
@@ -345,24 +334,20 @@ func initVolumeMigrationService(ctx context.Context, metadataSyncer *metadataSyn
 	var err error
 	var volManager volumes.Manager
 
-	if !isMultiVCenterFssEnabled {
-		volManager = metadataSyncer.volumeManager
-	} else {
-		if len(metadataSyncer.configInfo.Cfg.VirtualCenter) > 1 {
-			// Migration feature switch is enabled and multi vCenter feature is enabled, and
-			// Kubernetes Cluster is spread on multiple vCenter Servers.
-			return logger.LogNewErrorf(log,
-				"volume-migration feature is not supported on Multi-vCenter deployment")
-		}
-
-		// It is a single VC setup with Multi VC FSS enabled, we need to pick up the one and only volume manager in inventory.
-		vCenter := metadataSyncer.configInfo.Cfg.Global.VCenterIP
-		cnsVolumeMgr, volMgrFound := metadataSyncer.volumeManagers[vCenter]
-		if !volMgrFound {
-			return logger.LogNewErrorf(log, "could not get volume manager for the vCenter: %q", vCenter)
-		}
-		volManager = cnsVolumeMgr
+	if len(metadataSyncer.configInfo.Cfg.VirtualCenter) > 1 {
+		// Migration feature switch is enabled and multi vCenter feature is enabled, and
+		// Kubernetes Cluster is spread on multiple vCenter Servers.
+		return logger.LogNewErrorf(log,
+			"volume-migration feature is not supported on Multi-vCenter deployment")
 	}
+
+	// It is a single VC setup with Multi VC FSS enabled, we need to pick up the one and only volume manager in inventory.
+	vCenter := metadataSyncer.configInfo.Cfg.Global.VCenterIP
+	cnsVolumeMgr, volMgrFound := metadataSyncer.volumeManagers[vCenter]
+	if !volMgrFound {
+		return logger.LogNewErrorf(log, "could not get volume manager for the vCenter: %q", vCenter)
+	}
+	volManager = cnsVolumeMgr
 
 	volumeMigrationService, err = migration.GetVolumeMigrationService(ctx,
 		&volManager, metadataSyncer.configInfo.Cfg, true)
@@ -434,11 +419,6 @@ func getVcHostAndVolumeManagerForVolumeID(ctx context.Context,
 	volumeID string) (string, volumes.Manager, error) {
 	log := logger.GetLogger(ctx)
 	log.Debugf("Getting VC from in-memory map for volume %s", volumeID)
-
-	// isMultiVCenterFssEnabled feature gate is always going to be disabled for flavors other than vanilla.
-	if !isMultiVCenterFssEnabled {
-		return metadataSyncer.host, metadataSyncer.volumeManager, nil
-	}
 
 	if len(metadataSyncer.configInfo.Cfg.VirtualCenter) == 1 {
 		vCenter := metadataSyncer.configInfo.Cfg.Global.VCenterIP
@@ -541,10 +521,6 @@ func getVolManagerForVcHost(ctx context.Context, vc string,
 	metadataSyncer *metadataSyncInformer) (volumes.Manager, error) {
 	log := logger.GetLogger(ctx)
 
-	if !isMultiVCenterFssEnabled {
-		return metadataSyncer.volumeManager, nil
-	}
-
 	cnsVolumeMgr, volMgrFound := metadataSyncer.volumeManagers[vc]
 	if !volMgrFound {
 		return nil, logger.LogNewErrorf(log,
@@ -595,7 +571,7 @@ func getPVsInBoundAvailableOrReleasedForVc(ctx context.Context, metadataSyncer *
 	}
 
 	// For a single VC setup, send back all volumes.
-	if !isMultiVCenterFssEnabled || len(metadataSyncer.configInfo.Cfg.VirtualCenter) == 1 {
+	if len(metadataSyncer.configInfo.Cfg.VirtualCenter) == 1 {
 		return allPvs, nil
 	}
 
@@ -605,8 +581,7 @@ func getPVsInBoundAvailableOrReleasedForVc(ctx context.Context, metadataSyncer *
 	for _, pv := range allPvs {
 		// Check if the PV is an in-tree volume.
 		if pv.Spec.CSI == nil {
-			if metadataSyncer.coCommonInterface.IsFSSEnabled(ctx, common.CSIMigration) &&
-				pv.Spec.VsphereVolume != nil {
+			if pv.Spec.VsphereVolume != nil {
 				return nil, logger.LogNewErrorf(log,
 					"In-tree volumes are not supported on a multi VC set up."+
 						"Found in-tree volume %q.", pv.Name)
@@ -616,16 +591,6 @@ func getPVsInBoundAvailableOrReleasedForVc(ctx context.Context, metadataSyncer *
 		}
 
 		// Check if the PV is a file share volume.
-		if IsFileVolume(pv) {
-			isTopologyAwareFileVolumeEnabled := metadataSyncer.coCommonInterface.IsFSSEnabled(ctx,
-				common.TopologyAwareFileVolume)
-			if !isTopologyAwareFileVolumeEnabled {
-				return nil, logger.LogNewErrorf(log,
-					"File share volumes are not supported on a multi VC set up."+
-						"Found file share volume %s.", pv.Name)
-			}
-		}
-
 		if volumeInfoService == nil {
 			return nil, logger.LogNewErrorf(log, "VolumeInfoService is not initialized.")
 		}
@@ -764,7 +729,7 @@ func createCnsVolume(ctx context.Context, pv *v1.PersistentVolume,
 	} else {
 		log.Infof("vSphere CSI Driver has successfully marked volume: %q as the container volume.",
 			pv.Spec.CSI.VolumeHandle)
-		if isMultiVCenterFssEnabled && len(metadataSyncer.configInfo.Cfg.VirtualCenter) > 1 {
+		if len(metadataSyncer.configInfo.Cfg.VirtualCenter) > 1 {
 			// Create CNSVolumeInfo CR for the volume ID.
 			err = volumeInfoService.CreateVolumeInfo(ctx, pv.Spec.CSI.VolumeHandle, vcHost)
 			if err != nil {
@@ -791,8 +756,7 @@ func createMissingFileVolumeInfoCrs(ctx context.Context, metadataSyncer *metadat
 	fileVolumes := make([]*v1.PersistentVolume, 0)
 	for _, pv := range allPvs {
 		if pv.Spec.CSI == nil {
-			if metadataSyncer.coCommonInterface.IsFSSEnabled(ctx, common.CSIMigration) &&
-				pv.Spec.VsphereVolume != nil {
+			if pv.Spec.VsphereVolume != nil {
 				log.Errorf("In-tree volumes are not supported on a multi VC set up."+
 					"Found in-tree volume %s.", pv.Name)
 				return

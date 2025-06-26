@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/common/commonco"
 	"strconv"
 	"strings"
 	"time"
@@ -36,7 +37,6 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	clientset "k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/common"
-	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/common/commonco"
 	"sigs.k8s.io/vsphere-csi-driver/v3/pkg/csi/service/logger"
 )
 
@@ -93,12 +93,6 @@ func validateGuestClusterCreateVolumeRequest(ctx context.Context, req *csi.Creat
 			return logger.LogNewErrorCodef(log, codes.InvalidArgument,
 				"Volume parameter %s is not a valid GC CSI parameter", param)
 		}
-	}
-
-	// Fail file volume creation if file volume feature gate is disabled
-	if !commonco.ContainerOrchestratorUtility.IsFSSEnabled(ctx, common.FileVolume) &&
-		common.IsFileVolumeRequest(ctx, req.GetVolumeCapabilities()) {
-		return logger.LogNewErrorCode(log, codes.InvalidArgument, "File volume provisioning is not supported.")
 	}
 	return common.ValidateCreateVolumeRequest(ctx, req)
 }

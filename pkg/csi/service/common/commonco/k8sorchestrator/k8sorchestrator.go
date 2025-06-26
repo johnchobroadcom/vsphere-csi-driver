@@ -311,10 +311,8 @@ func Newk8sOrchestrator(ctx context.Context, controllerClusterFlavor cnstypes.Cn
 				return nil, fmt.Errorf("wrong orchestrator params type")
 			}
 
-			if ((controllerClusterFlavor == cnstypes.CnsClusterFlavorWorkload &&
-				k8sOrchestratorInstance.IsFSSEnabled(ctx, common.FakeAttach)) ||
-				(controllerClusterFlavor == cnstypes.CnsClusterFlavorVanilla &&
-					k8sOrchestratorInstance.IsFSSEnabled(ctx, common.ListVolumes))) &&
+			if (controllerClusterFlavor == cnstypes.CnsClusterFlavorWorkload ||
+				controllerClusterFlavor == cnstypes.CnsClusterFlavorVanilla) &&
 				(operationMode != operationModeWebHookServer) {
 				err := initVolumeHandleToPvcMap(ctx, controllerClusterFlavor)
 				if err != nil {
@@ -335,11 +333,9 @@ func Newk8sOrchestrator(ctx context.Context, controllerClusterFlavor cnstypes.Cn
 				}
 			} else if operationMode != operationModeWebHookServer {
 				// Initialize the map for volumeName to nodes, for non-WCP flavors and when ListVolume FSS is on
-				if k8sOrchestratorInstance.IsFSSEnabled(ctx, common.ListVolumes) {
-					err := initVolumeNameToNodesMap(ctx, controllerClusterFlavor)
-					if err != nil {
-						return nil, fmt.Errorf("failed to create PV name to node names map. Error: %v", err)
-					}
+				err := initVolumeNameToNodesMap(ctx, controllerClusterFlavor)
+				if err != nil {
+					return nil, fmt.Errorf("failed to create PV name to node names map. Error: %v", err)
 				}
 			}
 
@@ -353,18 +349,7 @@ func Newk8sOrchestrator(ctx context.Context, controllerClusterFlavor cnstypes.Cn
 
 func getReleasedVanillaFSS() map[string]struct{} {
 	return map[string]struct{}{
-		common.CSIMigration:                   {},
-		common.OnlineVolumeExtend:             {},
-		common.AsyncQueryVolume:               {},
-		common.BlockVolumeSnapshot:            {},
-		common.CSIWindowsSupport:              {},
-		common.ListVolumes:                    {},
-		common.CnsMgrSuspendCreateVolume:      {},
-		common.TopologyPreferentialDatastores: {},
-		common.MaxPVSCSITargetsPerVM:          {},
-		common.MultiVCenterCSITopology:        {},
-		common.CSIInternalGeneratedClusterID:  {},
-		common.TopologyAwareFileVolume:        {},
+		common.CSIWindowsSupport: {},
 	}
 }
 
@@ -454,122 +439,101 @@ func initFSS(ctx context.Context, k8sClient clientset.Interface,
 	}
 
 	if controllerClusterFlavor == cnstypes.CnsClusterFlavorGuest && serviceMode != "node" {
-		var isFSSCREnabled bool
-		// Check if csi-sv-feature-states-replication FSS exists and is enabled.
-		k8sOrchestratorInstance.internalFSS.featureStatesLock.RLock()
-		if val, ok := k8sOrchestratorInstance.internalFSS.featureStates[common.CSISVFeatureStateReplication]; ok {
-			k8sOrchestratorInstance.internalFSS.featureStatesLock.RUnlock()
-			isFSSCREnabled, err = strconv.ParseBool(val)
-			if err != nil {
-				log.Errorf("unable to convert %v to bool. csi-sv-feature-states-replication FSS disabled. Error: %v",
-					val, err)
+		svNamespace, err := cnsconfig.GetSupervisorNamespace(ctx)
+		if err != nil {
+			log.Errorf("failed to retrieve supervisor cluster namespace from config. Error: %+v", err)
+			return err
+		}
+		cfg, err := cnsconfig.GetConfig(ctx)
+		if err != nil {
+			log.Errorf("failed to read config. Error: %+v", err)
+			return err
+		}
+		// Get rest client config for supervisor.
+		restClientConfig := k8s.GetRestClientConfigForSupervisor(ctx, cfg.GC.Endpoint, cfg.GC.Port)
+
+		// Attempt to fetch the cnscsisvfeaturestate CR from the supervisor
+		// namespace of the TKG cluster.
+		svFssCR, err := getSVFssCR(ctx, restClientConfig)
+		if err != nil {
+			// If the cnscsisvfeaturestate CR is not yet registered in the
+			// supervisor cluster, we receive NoKindMatchError. In such cases
+			// log an info message and fallback to GCM replicated configmap
+			// approach.
+			_, ok := err.(*apiMeta.NoKindMatchError)
+			if ok {
+				log.Infof("%s CR not found in supervisor namespace. Defaulting to the %q FSS configmap "+
+					"in %q namespace. Error: %+v",
+					featurestates.CRDSingular, k8sOrchestratorInstance.supervisorFSS.configMapName,
+					k8sOrchestratorInstance.supervisorFSS.configMapNamespace, err)
+			} else {
+				log.Errorf("failed to get %s CR from supervisor namespace %q. Error: %+v",
+					featurestates.CRDSingular, svNamespace, err)
 				return err
 			}
 		} else {
-			k8sOrchestratorInstance.internalFSS.featureStatesLock.RUnlock()
-			return logger.LogNewError(log, "csi-sv-feature-states-replication FSS not present")
+			setSvFssCRAvailability(true)
+			// Store supervisor FSS values in cache.
+			k8sOrchestratorInstance.supervisorFSS.featureStatesLock.Lock()
+			for _, svFSS := range svFssCR.Spec.FeatureStates {
+				k8sOrchestratorInstance.supervisorFSS.featureStates[svFSS.Name] = strconv.FormatBool(svFSS.Enabled)
+			}
+			log.Infof("New supervisor feature states values stored successfully from %s CR object: %v",
+				featurestates.SVFeatureStateCRName, k8sOrchestratorInstance.supervisorFSS.featureStates)
+			k8sOrchestratorInstance.supervisorFSS.featureStatesLock.Unlock()
 		}
 
-		// Initialize supervisor FSS map values in GC using the
-		// cnscsisvfeaturestate CR if csi-sv-feature-states-replication FSS
-		// is enabled.
-		if isFSSCREnabled {
-			svNamespace, err := cnsconfig.GetSupervisorNamespace(ctx)
-			if err != nil {
-				log.Errorf("failed to retrieve supervisor cluster namespace from config. Error: %+v", err)
-				return err
-			}
-			cfg, err := cnsconfig.GetConfig(ctx)
-			if err != nil {
-				log.Errorf("failed to read config. Error: %+v", err)
-				return err
-			}
-			// Get rest client config for supervisor.
-			restClientConfig := k8s.GetRestClientConfigForSupervisor(ctx, cfg.GC.Endpoint, cfg.GC.Port)
-
-			// Attempt to fetch the cnscsisvfeaturestate CR from the supervisor
-			// namespace of the TKG cluster.
-			svFssCR, err := getSVFssCR(ctx, restClientConfig)
-			if err != nil {
-				// If the cnscsisvfeaturestate CR is not yet registered in the
-				// supervisor cluster, we receive NoKindMatchError. In such cases
-				// log an info message and fallback to GCM replicated configmap
-				// approach.
-				_, ok := err.(*apiMeta.NoKindMatchError)
-				if ok {
-					log.Infof("%s CR not found in supervisor namespace. Defaulting to the %q FSS configmap "+
-						"in %q namespace. Error: %+v",
-						featurestates.CRDSingular, k8sOrchestratorInstance.supervisorFSS.configMapName,
-						k8sOrchestratorInstance.supervisorFSS.configMapNamespace, err)
-				} else {
-					log.Errorf("failed to get %s CR from supervisor namespace %q. Error: %+v",
-						featurestates.CRDSingular, svNamespace, err)
-					return err
-				}
-			} else {
-				setSvFssCRAvailability(true)
-				// Store supervisor FSS values in cache.
-				k8sOrchestratorInstance.supervisorFSS.featureStatesLock.Lock()
-				for _, svFSS := range svFssCR.Spec.FeatureStates {
-					k8sOrchestratorInstance.supervisorFSS.featureStates[svFSS.Name] = strconv.FormatBool(svFSS.Enabled)
-				}
-				log.Infof("New supervisor feature states values stored successfully from %s CR object: %v",
-					featurestates.SVFeatureStateCRName, k8sOrchestratorInstance.supervisorFSS.featureStates)
-				k8sOrchestratorInstance.supervisorFSS.featureStatesLock.Unlock()
-			}
-
-			// Create an informer to watch on the cnscsisvfeaturestate CR.
-			go func() {
-				// Ideally if a resource is not yet registered on a cluster and we
-				// try to create an informer to watch it, the informer creation will
-				// not fail. But, the informer starts emitting error messages like
-				// `Failed to list X: the server could not find the requested resource`.
-				// To avoid this, we attempt to fetch the cnscsisvfeaturestate CR
-				// first and retry if we receive an error. This is required in cases
-				// where TKG cluster is on a newer build and supervisor is at an
-				// older version.
-				ticker := time.NewTicker(informerCreateRetryInterval)
-				var dynInformer informers.GenericInformer
-				for range ticker.C {
-					// Check if cnscsisvfeaturestate CR exists, if not keep retrying.
-					_, err = getSVFssCR(ctx, restClientConfig)
-					if err != nil {
-						continue
-					}
-					// Create a dynamic informer for the cnscsisvfeaturestate CR.
-					dynInformer, err = k8s.GetDynamicInformer(ctx, featurestates.CRDGroupName,
-						internalapis.Version, featurestates.CRDPlural, svNamespace, restClientConfig, false)
-					if err != nil {
-						log.Errorf("failed to create dynamic informer for %s CR. Error: %+v", featurestates.CRDSingular, err)
-						continue
-					}
-					break
-				}
-				// Set up namespaced listener for cnscsisvfeaturestate CR.
-				_, err = dynInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-					// Add.
-					AddFunc: func(obj interface{}) {
-						fssCRAdded(obj)
-					},
-					// Update.
-					UpdateFunc: func(oldObj interface{}, newObj interface{}) {
-						fssCRUpdated(oldObj, newObj)
-					},
-					// Delete.
-					DeleteFunc: func(obj interface{}) {
-						fssCRDeleted(obj)
-					},
-				})
+		// Create an informer to watch on the cnscsisvfeaturestate CR.
+		go func() {
+			// Ideally if a resource is not yet registered on a cluster and we
+			// try to create an informer to watch it, the informer creation will
+			// not fail. But, the informer starts emitting error messages like
+			// `Failed to list X: the server could not find the requested resource`.
+			// To avoid this, we attempt to fetch the cnscsisvfeaturestate CR
+			// first and retry if we receive an error. This is required in cases
+			// where TKG cluster is on a newer build and supervisor is at an
+			// older version.
+			ticker := time.NewTicker(informerCreateRetryInterval)
+			var dynInformer informers.GenericInformer
+			for range ticker.C {
+				// Check if cnscsisvfeaturestate CR exists, if not keep retrying.
+				_, err = getSVFssCR(ctx, restClientConfig)
 				if err != nil {
-					log.Errorf("failed to add event handler for informer on %q CR. Error: %v",
-						featurestates.CRDPlural, err)
-					os.Exit(1)
+					continue
 				}
-				stopCh := make(chan struct{})
-				log.Infof("Informer to watch on %s CR starting..", featurestates.CRDSingular)
-				dynInformer.Informer().Run(stopCh)
-			}()
-		}
+				// Create a dynamic informer for the cnscsisvfeaturestate CR.
+				dynInformer, err = k8s.GetDynamicInformer(ctx, featurestates.CRDGroupName,
+					internalapis.Version, featurestates.CRDPlural, svNamespace, restClientConfig, false)
+				if err != nil {
+					log.Errorf("failed to create dynamic informer for %s CR. Error: %+v", featurestates.CRDSingular, err)
+					continue
+				}
+				break
+			}
+			// Set up namespaced listener for cnscsisvfeaturestate CR.
+			_, err = dynInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+				// Add.
+				AddFunc: func(obj interface{}) {
+					fssCRAdded(obj)
+				},
+				// Update.
+				UpdateFunc: func(oldObj interface{}, newObj interface{}) {
+					fssCRUpdated(oldObj, newObj)
+				},
+				// Delete.
+				DeleteFunc: func(obj interface{}) {
+					fssCRDeleted(obj)
+				},
+			})
+			if err != nil {
+				log.Errorf("failed to add event handler for informer on %q CR. Error: %v",
+					featurestates.CRDPlural, err)
+				os.Exit(1)
+			}
+			stopCh := make(chan struct{})
+			log.Infof("Informer to watch on %s CR starting..", featurestates.CRDSingular)
+			dynInformer.Informer().Run(stopCh)
+		}()
 	}
 	// Initialize supervisor FSS map values using configmap in Supervisor
 	// cluster flavor or in guest cluster flavor only if cnscsisvfeaturestate
@@ -960,7 +924,6 @@ func pvAdded(obj interface{}) {
 	// Since cns query will return all the volumes including the migrated ones, the map would need to be a
 	// union of migrated VCP-CSI volumes and CSI volumes, as well.
 	if pv.Spec.VsphereVolume != nil &&
-		k8sOrchestratorInstance.IsFSSEnabled(context.Background(), common.CSIMigration) &&
 		isValidMigratedvSphereVolume(context.Background(), pv.ObjectMeta) {
 		if pv.Status.Phase == v1.VolumeBound {
 			k8sOrchestratorInstance.volumeIDToNameMap.add(pv.Spec.VsphereVolume.VolumePath, pv.Name)
@@ -1008,7 +971,6 @@ func pvUpdated(oldObj, newObj interface{}) {
 	// Since cns query will return all the volumes including the migrated ones, the map would need to be a
 	// union of migrated VCP-CSI volumes and CSI volumes, as well.
 	if newPv.Spec.VsphereVolume != nil &&
-		k8sOrchestratorInstance.IsFSSEnabled(context.Background(), common.CSIMigration) &&
 		isValidMigratedvSphereVolume(context.Background(), newPv.ObjectMeta) {
 		if oldPv.Status.Phase != v1.VolumeBound && newPv.Status.Phase == v1.VolumeBound {
 			k8sOrchestratorInstance.volumeIDToNameMap.add(newPv.Spec.VsphereVolume.VolumePath, newPv.Name)
@@ -1035,7 +997,7 @@ func pvDeleted(obj interface{}) {
 		log.Debugf("k8sorchestrator: Deleted key %s from volumeIDToNameMap", pv.Spec.CSI.VolumeHandle)
 
 	}
-	if pv.Spec.VsphereVolume != nil && k8sOrchestratorInstance.IsFSSEnabled(context.Background(), common.CSIMigration) {
+	if pv.Spec.VsphereVolume != nil {
 		k8sOrchestratorInstance.volumeIDToNameMap.remove(pv.Spec.VsphereVolume.VolumePath)
 		log.Debugf("k8sorchestrator migrated volume: Deleted key %s from volumeIDToNameMap",
 			pv.Spec.VsphereVolume.VolumePath)

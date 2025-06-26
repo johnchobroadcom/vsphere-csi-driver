@@ -42,20 +42,18 @@ import (
 // VanillaCreateBlockVolParamsForMultiVC stores the parameters
 // required to call CreateBlockVolumeUtilForMultiVC function.
 type VanillaCreateBlockVolParamsForMultiVC struct {
-	Vcenter                   *vsphere.VirtualCenter
-	VolumeManager             cnsvolume.Manager
-	CNSConfig                 *config.Config
-	StoragePolicyID           string
-	Spec                      *CreateVolumeSpec
-	SharedDatastores          []*vsphere.DatastoreInfo
-	SnapshotDatastoreURL      string
-	ClusterFlavor             cnstypes.CnsClusterFlavor
-	FilterSuspendedDatastores bool
+	Vcenter              *vsphere.VirtualCenter
+	VolumeManager        cnsvolume.Manager
+	CNSConfig            *config.Config
+	StoragePolicyID      string
+	Spec                 *CreateVolumeSpec
+	SharedDatastores     []*vsphere.DatastoreInfo
+	SnapshotDatastoreURL string
+	ClusterFlavor        cnstypes.CnsClusterFlavor
 }
 
 // CreateBlockVolumeOptions defines the FSS required to create a block volume.
 type CreateBlockVolumeOptions struct {
-	FilterSuspendedDatastores,
 	UseSupervisorId,
 	IsVdppOnStretchedSvFssEnabled bool
 	IsByokEnabled                  bool
@@ -92,12 +90,10 @@ func CreateBlockVolumeUtil(
 		}
 	}
 
-	if opts.FilterSuspendedDatastores {
-		sharedDatastores, err = vsphere.FilterSuspendedDatastores(ctx, sharedDatastores)
-		if err != nil {
-			log.Errorf("Error occurred while filter suspended datastores, err: %+v", err)
-			return nil, csifault.CSIInternalFault, err
-		}
+	sharedDatastores, err = vsphere.FilterSuspendedDatastores(ctx, sharedDatastores)
+	if err != nil {
+		log.Errorf("Error occurred while filter suspended datastores, err: %+v", err)
+		return nil, csifault.CSIInternalFault, err
 	}
 
 	var datastoreObj *vsphere.Datastore
@@ -125,7 +121,7 @@ func CreateBlockVolumeUtil(
 					continue
 				}
 
-				if opts.FilterSuspendedDatastores && vsphere.IsVolumeCreationSuspended(ctx, datastoreInfoObj) {
+				if vsphere.IsVolumeCreationSuspended(ctx, datastoreInfoObj) {
 					continue
 				}
 				datastoreObj = datastoreInfoObj.Datastore
@@ -171,7 +167,7 @@ func CreateBlockVolumeUtil(
 				continue
 			}
 
-			if opts.FilterSuspendedDatastores && vsphere.IsVolumeCreationSuspended(ctx, datastoreInfoObj) {
+			if vsphere.IsVolumeCreationSuspended(ctx, datastoreInfoObj) {
 				continue
 			}
 			datastoreObj = datastoreInfoObj.Datastore
@@ -530,7 +526,7 @@ func CreateBlockVolumeUtilForMultiVC(ctx context.Context, reqParams interface{},
 // datastores.
 func CreateFileVolumeUtil(ctx context.Context, clusterFlavor cnstypes.CnsClusterFlavor,
 	vc *vsphere.VirtualCenter, volumeManager cnsvolume.Manager, cnsConfig *config.Config, spec *CreateVolumeSpec,
-	datastores []*vsphere.DatastoreInfo, filterSuspendedDatastores, useSupervisorId bool, extraParams interface{}) (
+	datastores []*vsphere.DatastoreInfo, useSupervisorId bool, extraParams interface{}) (
 	*cnsvolume.CnsVolumeInfo, string, error) {
 	log := logger.GetLogger(ctx)
 	var err error
@@ -546,12 +542,10 @@ func CreateFileVolumeUtil(ctx context.Context, clusterFlavor cnstypes.CnsCluster
 		}
 	}
 
-	if filterSuspendedDatastores {
-		datastores, err = vsphere.FilterSuspendedDatastores(ctx, datastores)
-		if err != nil {
-			log.Errorf("Error occurred while filter suspended datastores, err: %+v", err)
-			return nil, csifault.CSIInternalFault, err
-		}
+	datastores, err = vsphere.FilterSuspendedDatastores(ctx, datastores)
+	if err != nil {
+		log.Errorf("Error occurred while filter suspended datastores, err: %+v", err)
+		return nil, csifault.CSIInternalFault, err
 	}
 
 	var datastoreMorefs []vim25types.ManagedObjectReference
@@ -715,7 +709,7 @@ func DeleteVolumeUtil(ctx context.Context, volManager cnsvolume.Manager, volumeI
 // volumeId.
 func ExpandVolumeUtil(ctx context.Context, vCenterManager vsphere.VirtualCenterManager,
 	vCenterHost string, volumeManager cnsvolume.Manager, volumeID string, capacityInMb int64,
-	useAsyncQueryVolume bool, extraParams interface{}) (string, error) {
+	extraParams interface{}) (string, error) {
 	var err error
 	log := logger.GetLogger(ctx)
 	log.Debugf("vSphere CSI driver expanding volume %q to new size %d Mb.", volumeID, capacityInMb)
@@ -738,7 +732,7 @@ func ExpandVolumeUtil(ctx context.Context, vCenterManager vsphere.VirtualCenterM
 	if !isvSphere8AndAbove {
 		// Query Volume to check Volume Size for vSphere version below 8.0
 		expansionRequired, err = isExpansionRequired(ctx, volumeID, capacityInMb,
-			volumeManager, useAsyncQueryVolume)
+			volumeManager)
 		if err != nil {
 			return csifault.CSIInternalFault, err
 		}
@@ -788,7 +782,7 @@ func ListSnapshotsUtil(ctx context.Context, volManager cnsvolume.Manager, volume
 			Names: []string{string(cnstypes.QuerySelectionNameTypeVolumeType)},
 		}
 		// Validate that the volume-id is of block volume type.
-		queryResult, err := utils.QueryVolumeUtil(ctx, volManager, queryFilter, &querySelection, true)
+		queryResult, err := utils.QueryVolumeUtil(ctx, volManager, queryFilter, &querySelection)
 		if err != nil {
 			return nil, "", logger.LogNewErrorCodef(log, codes.Internal,
 				"queryVolumeUtil failed with err=%+v", err)
@@ -1016,7 +1010,7 @@ func QueryVolumeByID(ctx context.Context, volManager cnsvolume.Manager, volumeID
 	queryFilter := cnstypes.CnsQueryFilter{
 		VolumeIds: []cnstypes.CnsVolumeId{{Id: volumeID}},
 	}
-	queryResult, err := utils.QueryVolumeUtil(ctx, volManager, queryFilter, querySelection, true)
+	queryResult, err := utils.QueryVolumeUtil(ctx, volManager, queryFilter, querySelection)
 	if err != nil {
 		log.Errorf("QueryVolumeUtil failed for volumeID: %s with error %+v", volumeID, err)
 		return nil, err
@@ -1068,7 +1062,7 @@ func getDatastoreInfoObjList(ctx context.Context, vc *vsphere.VirtualCenter,
 // isExpansionRequired verifies if the requested size to expand a volume is
 // greater than the current size.
 func isExpansionRequired(ctx context.Context, volumeID string, requestedSize int64,
-	volumeManager cnsvolume.Manager, useAsyncQueryVolume bool) (bool, error) {
+	volumeManager cnsvolume.Manager) (bool, error) {
 	log := logger.GetLogger(ctx)
 	volumeIds := []cnstypes.CnsVolumeId{{Id: volumeID}}
 	queryFilter := cnstypes.CnsQueryFilter{
